@@ -1,0 +1,1352 @@
+---
+title: "Korrelation TUM/Charité"
+author: "Kerstin Rubarth"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.path= "Files")
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(limma)
+library(FactoMineR)
+library(factoextra)
+library(patchwork)
+library(EnhancedVolcano)
+library(tableone)
+library(kableExtra)
+library(dplyr)
+library(openxlsx)
+library(viridis)
+library(forcats)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(Hmisc)
+library(ggh4x)
+library(psych)
+library(reshape2)
+```
+
+```{r data}
+#data <- read_excel("../cohort/202408 MRITUM_metadata_total_v1.xlsx")
+data <- read_excel("../cohort/202408 MRITUM_metadata_total_without seronegative samples_v2.xlsx")
+names <- data[1,]
+data <- data[-1,]
+
+colnames(data) <- names
+# only use data marked with OK
+data <- clean_names(data)
+
+names <- colnames(data)
+names <- gsub("median_pe_", "", names)
+names <- gsub("labim_", "", names)
+names <- gsub("labinf_", "", names)
+names <- gsub("labend_", "", names)
+names <- gsub("labkl_", "", names)
+names <- gsub("labh_","", names)
+names <- gsub("_altes_peptid", "", names)
+names <- gsub("response" ,"", names)
+names <- gsub("__afu", "", names)
+names <- gsub("ebv_serology_", "", names)
+
+
+colnames(data) <- names
+
+
+
+# Variablen-Sets
+## igG
+igG_B <- colnames(data)[c(83:94)]
+igG_B_positiv <- colnames(data)[c(96:107)]
+#igG_M <- colnames(data)[c(64:77)]
+
+# Neu: Reduktion
+#igG_M <- igG_M[c(1:10)]
+
+igG_M <- c("ebna3c_ebna6_ig_g", "adra1b_ig_g", "adra1d_ig_g", "adra2c_ig_g", "pld6_ig_g", "srrm3_ig_g", "slc24a3_ig_g", "tspyl2_ig_g", "ebna3b_ebna4_ig_g", "tspyl5_ig_g")
+
+## Scores
+scores <- colnames(data)[c(27:30, 33:54)]
+
+# Männlichen Patient ausschließen
+data <- subset(data, intern_id != "9212")
+
+# Patient mit AUSSCHLUSS (PCS/CFS) raus
+
+data <- subset(data, diagnosis != "AUSSCHLUSS (PCS/CFS)")
+
+# Daten numerisch transformieren
+data[c(igG_B, igG_B_positiv, igG_M, scores)] <- lapply(data[c(igG_B, igG_B_positiv, igG_M, scores)], as.numeric)
+
+# Doppelte Zeilen löschen
+data <- data[!duplicated(data$intern_id), ]
+
+
+
+data <- data %>% mutate(diagnosis = case_when(diagnosis == "PCS" ~ "PCS",
+                                              diagnosis == "piCFS" ~ "piMECFS",
+                                              diagnosis == "pcCFS" ~ "pcMECFS",
+                                              diagnosis == "HC" ~ "HC"))
+
+
+```
+
+
+```{r heatmap_func, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+create_correlation_plot <- function(data, v1, v2, d, stratified, show_legend = TRUE, show_y_labels = TRUE) {
+
+  if(identical(deparse(substitute(v2)), "igG_B_positiv")){
+    custom_labels2 <- c("ebna6_0740_2" = "EBNA6_740",
+                        "ebna6_0066_2" = "EBNA6_66",
+                        "ebna6_0070_2" = "EBNA6_70",
+                        "ada1b_369_383_2" = "ADRA1B_369",
+                        "ada1d_422_436_2" = "ADRA1D_422",
+                        "ada2c_289_303_2" = "ADRA2C_289",
+                        "pld6_2" = "PLD6_29",
+                        "srrm3_383_397_2" = "SRRM3_383",
+                        "slc24a3_8_22_2" = "SLC24A3_8",
+                        "tspyl2_185_199_2" = "TSPYL2_185",
+                        "ebna4_0529_2" = "EBNA4_529",
+                        "tspyl5_133_147_2" = "TSPYL5_133",
+                        "ebna4_0539_c540s_2" = "EBNA4_0539_C540s"
+                        )
+  }
+    if(identical(deparse(substitute(v2)), "igG_B")){
+    custom_labels2 <- c("ebna6_0740" = "EBNA6_740",
+                        "ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_199" = "TSPYL2_185",
+                        "ebna4_0529" = "EBNA4_529",
+                        "tspyl5_133_147" = "TSPYL5_133",
+                        "ebna4_0539_c540s" = "EBNA4_0539_C540s"
+                        )
+  }
+  
+  if(identical(deparse(substitute(v2)), "igG_M")){
+    custom_labels2 <- c("ebna3c_ebna6_ig_g" = "EBNA6",
+                        "adra1b_ig_g" = "ADRA1B",
+                        "adra1d_ig_g" = "ADRA1D",
+                        "adra2c_ig_g" = "ADRA2C",
+                        "pld6_ig_g" = "PLD6",
+                        "srrm3_ig_g" = "SRRM3",
+                        "slc24a3_ig_g" = "SLC24A3",
+                        "tspyl2_ig_g" = "TSPYL2",
+                        "ebna3b_ebna4_ig_g" = "EBNA4",
+                        "tspyl5_ig_g" = "TSPYL5"
+                        )
+  }
+
+    if(identical(deparse(substitute(v2)), "igG_M_2")){
+    custom_labels2 <- c("ebna3c_ebna6_ig_g" = "EBNA3C EBNA6",
+                        "ebna3b_ebna4_ig_g" = "EBNA3B EBNA4",
+                        "ebna1del_cdo_ebna1_ig_g" = "EBNA1DE CDO EBNA1",
+                        "bfrf3_ebv_vca_p18_ig_g" = "BFRF3 EBV VCA P18",
+                        "blrf2_ebv_vca_p23_ig_g_2" = "BLRF2 EBV VCA P23",
+                        "bmrf1cdo_ebv_ea_d_ig_g" = "BMRF1CDO EBV EA D"
+                        )
+  }  
+  
+  if(identical(deparse(substitute(v2)), "scores")){
+    custom_labels2 <- c("bell_score" = "Bell",
+                        "chalder_fatigue_score" = "Chalder-Fatigue",
+                        "pem_score" = "PEM",
+                        "physical_functioning" = "SF-36 PF",
+                        "energy_fatigue" = "SF36: Energy/Fatigue",
+                        "emotional_wellbeing" = "SF36: Emotional Wellbeing",
+                        "social_functioning" = "SF36: Social Functioning",
+                        "pain" = "SF36: Pain",
+                        "general_health" = "SF36: General Health",
+                        "health_change" = "SF36: Health Change",
+                        "physical_sum_scale" = "SF36: Physical Sum Scale",
+                        "psychical_sum_scale" = "SF36: Psychical Sum Scale",
+                        "fatigue_sy_1" = "Fatigue",
+                        "severity_of_muscle_pain_sy_6" = "Severity of Muscle Pain",
+                        "severity_of_headache_sy_7" = "Severity of headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }
+
+  
+  if(identical(deparse(substitute(v2)), "scores_short")){
+    custom_labels2 <- c("bell_score" = "Bell",
+                        "physical_functioning" = "SF-36 PF",
+                        "chalder_fatigue_score" = "CFQ",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                        "severity_of_headache_sy_7" = "Headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "pem_score" = "PEM",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }  
+  
+    if(identical(deparse(substitute(v2)), "scores_short_new")){
+    custom_labels2 <- c("fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                        "severity_of_headache_sy_7" = "Headache",
+                        "pem_score" = "PEM",
+                        "com_total" = "Compass")
+  }  
+    
+  if(identical(deparse(substitute(v2)), "ebv_serology")){
+    custom_labels2 <- c("vca_ig_g" = "VCA IgG",
+                        "ebna1_ig_g" = "EBNA1 IgG"
+                        )
+  }    
+  
+  if(identical(deparse(substitute(v1)), "igG_B_positiv")){
+    custom_labels1 <- c("ebna6_0740_2" = "EBNA6_740",
+                        "ebna6_0066_2" = "EBNA6_66",
+                        "ebna6_0070_2" = "EBNA6_70",
+                        "ada1b_369_383_2" = "ADRA1B_369",
+                        "ada1d_422_436_2" = "ADRA1D_422",
+                        "ada2c_289_303_2" = "ADRA2C_289",
+                        "pld6_2" = "PLD6_29",
+                        "srrm3_383_397_2" = "SRRM3_383",
+                        "slc24a3_8_22_2" = "SLC24A3_8",
+                        "tspyl2_185_199_2" = "TSPYL2_185",
+                        "ebna4_0529_2" = "EBNA4_529",
+                        "tspyl5_133_147_2" = "TSPYL5_133",
+                        "ebna4_0539_c540s_2" = "EBNA4_0539_C540s"
+                        )
+  }    
+  
+    if(identical(deparse(substitute(v1)), "igG_B")){
+    custom_labels1 <- c("ebna6_0740" = "EBNA6_740",
+                        "ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_199" = "TSPYL2_185",
+                        "ebna4_0529" = "EBNA4_529",
+                        "tspyl5_133_147" = "TSPYL5_133",
+                        "ebna4_0539_c540s" = "EBNA4_0539_C540s"
+                        )
+  }
+  
+  if(identical(deparse(substitute(v1)), "igG_M")){
+    custom_labels1 <- c("ebna3c_ebna6_ig_g" = "EBNA6",
+                        "adra1b_ig_g" = "ADRA1B",
+                        "adra1d_ig_g" = "ADRA1D",
+                        "adra2c_ig_g" = "ADRA2C",
+                        "pld6_ig_g" = "PLD6",
+                        "srrm3_ig_g" = "SRRM3",
+                        "slc24a3_ig_g" = "SLC24A3",
+                        "tspyl2_ig_g" = "TSPYL2",
+                        "ebna3b_ebna4_ig_g" = "EBNA4",
+                        "tspyl5_ig_g" = "TSPYL5"
+                        )
+  }
+    if(identical(deparse(substitute(v1)), "igG_M_2")){
+    custom_labels1 <- c("ebna3c_ebna6_ig_g" = "EBNA3C EBNA6",
+                        "ebna3b_ebna4_ig_g" = "EBNA3B EBNA4",
+                        "ebna1del_cdo_ebna1_ig_g" = "EBNA1DE CDO EBNA1",
+                        "bfrf3_ebv_vca_p18_ig_g" = "BFRF3 EBV VCA P18",
+                        "blrf2_ebv_vca_p23_ig_g_2" = "BLRF2 EBV VCA P23",
+                        "bmrf1cdo_ebv_ea_d_ig_g" = "BMRF1CDO EBV EA D"
+                        )
+  }   
+  
+  if(identical(deparse(substitute(v1)), "scores")){
+    custom_labels1 <- c("bell_score" = "Bell",
+                        "chalder_fatigue_score" = "Chalder-Fatigue",
+                        "pem_score" = "PEM",
+                        "physical_functioning" = "SF-36 PF",
+                        "energy_fatigue" = "SF36: Energy/Fatigue",
+                        "emotional_wellbeing" = "SF36: Emotional Wellbeing",
+                        "social_functioning" = "SF36: Social Functioning",
+                        "pain" = "SF36: Pain",
+                        "general_health" = "SF36: General Health",
+                        "health_change" = "SF36: Health Change",
+                        "physical_sum_scale" = "SF36: Physical Sum Scale",
+                        "psychical_sum_scale" = "SF36: Psychical Sum Scale",
+                        "fatigue_sy_1" = "Fatigue",
+                        "severity_of_muscle_pain_sy_6" = "Severity of Muscle Pain",
+                        "severity_of_headache_sy_7" = "Severity of headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }  
+
+  if(identical(deparse(substitute(v1)), "scores_short")){
+    custom_labels1 <- c("bell_score" = "Bell",
+                        "physical_functioning" = "SF-36 PF",
+                        "chalder_fatigue_score" = "CFQ",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                        "severity_of_headache_sy_7" = "Headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "pem_score" = "PEM",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }  
+  
+  if(identical(deparse(substitute(v1)), "scores_short_new")){
+    custom_labels1 <- c("fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                        "severity_of_headache_sy_7" = "Headache",
+                        "pem_score" = "PEM",
+                        "com_total" = "Compass")
+  }    
+  
+    
+  if(identical(deparse(substitute(v1)), "ebv_serology")){
+    custom_labels1 <- c("vca_ig_g" = "VCA IgG",
+                        "ebna1_ig_g" = "EBNA1 IgG"
+                        )
+  }     
+  
+  custom_labels2 <- rev(custom_labels2)
+
+  
+  
+  # Prüfen, ob Stratifizierung durchgeführt werden soll
+  if (stratified) {
+    data_sub <- subset(data, diagnosis == d)
+  } else {
+    data_sub <- subset(data, diagnosis != "piMECFS")
+  }
+  
+  
+  
+  # Calculate Correlations
+  cor_mat <- cor(data_sub[, v1, drop = FALSE], data_sub[, v2, drop = FALSE], use = "pairwise.complete.obs", method = "spearman")
+  cor_mat <- as.data.frame(cor_mat)
+
+  # Initialize DataFrame for p-values and sample sizes
+  p_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  n_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  colnames(p_values) <- colnames(cor_mat)
+  rownames(p_values) <- rownames(cor_mat)
+  colnames(n_values) <- colnames(cor_mat)
+  rownames(n_values) <- rownames(cor_mat)
+
+ for(i in seq_along(v1)) {
+    for(j in seq_along(v2)) {
+        x <- as.numeric(unlist(data_sub[, v1[i]]))
+        y <- as.numeric(unlist(data_sub[, v2[j]]))
+        
+        # Calculate the number of non-missing values in both x and y
+        n_values[i, j] <- sum(!is.na(x) & !is.na(y))
+        
+        # Only perform the correlation test if there are valid pairs
+        if (n_values[i, j] > 0) {
+            test <- cor.test(x, y, method = "spearman", use = "pairwise.complete.obs")
+            p_values[i, j] <- test$p.value
+        } else {
+            p_values[i, j] <- NA
+        }
+    }
+}
+  p_values <- as.data.frame(p_values)
+  n_values <- as.data.frame(n_values)
+
+  # Format Correlations, p-values, and n-values into a suitable format
+  cor_mat <- cor_mat %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "Correlation", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  p_values <- p_values %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "p_value", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  n_values <- n_values %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "n", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  result <- left_join(cor_mat, p_values, by = c("Var1", "Var2"))
+  result <- left_join(result, n_values, by = c("Var1", "Var2"))
+
+  # Create a new field for the star based on the p-value
+  result <- result %>%
+    mutate(Star = ifelse(p_value < 0.05, "*", ""))
+  
+  
+   # Calculate the number of variables
+  n_var1 <- length(v1)
+  n_var2 <- length(v2)
+
+  # Set tile size (adjust as needed)
+  tile_size <- 0.35
+
+  # Calculate the plot dimensions based on the number of variables and tile size
+  plot_width <- tile_size * n_var1   
+  plot_height <- tile_size * n_var2
+  
+  
+  
+  # Create the plot
+  g <- ggplot(data = result, 
+              aes(Var1, Var2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", 
+                         midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                         name = "Correlation") +
+    theme_minimal() +
+    theme(
+      axis.text.y = if (show_y_labels) element_text(hjust = 1, face = "bold", size = 10) else element_blank(),
+    legend.position = if (show_legend) "right" else "none",  # Steuert die Legende
+
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0, face = "bold", size = 10),  
+      #axis.text.y = element_text(hjust = 1, face = "bold", size = 10),  
+      axis.title.x = element_text(vjust = 1.5, face = "bold", size = 10),  # Adjust x-axis title position
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      #plot.margin = margin(1, 1, 1, 1, "cm"),  # Adjust the margin around the plot
+      panel.spacing = unit(0.5, "lines"),
+    plot.title = element_text(hjust = 0.5, size = 26, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman")
+    ) +  
+    labs(title = paste(d)) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Correlation) > 0.7, sprintf("%.2f\nn=%d", Correlation, n), "")),
+              color = "white", size = 3) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Correlation) <= 0.7 & abs(Correlation) > 0.3, sprintf("%.2f\nn=%d", Correlation, n), "")),
+              color = "black", size = 3) +
+    scale_x_discrete(labels = custom_labels1, position = "top") + 
+    scale_y_discrete(labels = custom_labels2) +
+    labs(x = NULL) +
+    geom_text(aes(label = Star), color = "black", size = 5, vjust = +0.8, hjust = -1.5)+
+    force_panelsizes(cols = unit(plot_width, "in"), rows = unit(plot_height, "in"))
+  
+  print(g)
+  
+  # Create a folder for saved graphics (if not already present)
+  save_folder <- "Heatmaps2"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+
+  # Generate filename for saved graphic
+  file_name <- paste(save_folder, "/", deparse(substitute(v1)), "_", deparse(substitute(v2)),"_", gsub("/", "_", d), "_correlation_plot.png", sep = "")
+
+ # print(file_name)
+  # Save graphic
+  ggsave(file_name, g, width = plot_width +2, height = plot_height+2, bg = "white", limitsize = FALSE)
+  return(g)
+}
+```
+
+# Korrelationen IgG Charité vs. München
+
+## Alle Werte miteinbezogen
+
+```{r igG_igM, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+for(d in dia){
+  create_correlation_plot(data, igG_B, igG_M, d, TRUE, TRUE, TRUE)
+}
+
+
+
+
+
+create_correlation_plot(data, igG_B, igG_M, "Full Cohort without piMECFS", FALSE)
+
+```
+
+## Nur positive Werte (0 als NA)
+
+Hier musste ich die HCs löschen (zu wenige Beobachtungen)
+
+```{r igG_pos_igM_pos, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS")
+
+data_pos <- data
+data_pos[igG_M] <- lapply(data_pos[igG_M], function(x) ifelse(x == 0, NA, x))
+data_pos[igG_B_positiv] <- lapply(data_pos[igG_B_positiv], function(x) ifelse(x == 0, NA, x))
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_B_positiv, igG_M, d, TRUE)
+}
+
+
+create_correlation_plot(data, igG_B, igG_M, "Full Cohort without piMECFS", FALSE)
+```
+
+
+
+## Nur positive Werte (0 als 0)
+
+```{r igG_pos_igM_pos_0, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+data_pos <- data
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_B_positiv, igG_M, d, TRUE)
+}
+
+
+create_correlation_plot(data, igG_B, igG_M, "Full Cohort without piMECFS", FALSE)
+```
+
+## Pos. vs. negativ
+
+Hier berechne ich nicht die Spearman-Korrelation sondern den so genannten Phi-Koeffizient, welcher ein Zusammenhangsmaß für binäre Daten (z.B. positive vs. negative Daten) ist.
+
+```{r phi, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+
+
+data_01 <- data
+data_01[c(igG_B_positiv, igG_M)] <- lapply(data_01[c(igG_B_positiv, igG_M)], function(x) ifelse(x > 0, 1, 0))
+
+
+
+create_correlation_plot_phi <- function(data, v1, v2, d, stratified = TRUE, show_legend = TRUE, show_y_labels = TRUE) {
+  
+    if(identical(deparse(substitute(v2)), "igG_B_positiv")){
+    custom_labels2 <- c("ebna6_0740_2" = "EBNA6 740",
+                        "ebna6_0066_2" = "EBNA6 66",
+                        "ebna6_0070_2" = "EBNA6 70",
+                        "ada1b_369_383_2" = "ADRA1B 369",
+                        "ada1d_422_436_2" = "ADRA1D 422",
+                        "ada2c_289_303_2" = "ADRA2C 289",
+                        "pld6_2" = "PLD6 29",
+                        "srrm3_383_397_2" = "SRRM3 383",
+                        "slc24a3_8_22_2" = "SLC24A3 8",
+                        "tspyl2_185_199_2" = "TSPYL2 185",
+                        "ebna4_0529_2" = "EBNA4 529",
+                        "tspyl5_133_147_2" = "TSPYL5 133",
+                        "ebna4_0539_c540s_2" = "EBNA4 0539 C540s"
+                        )
+  }
+    if(identical(deparse(substitute(v2)), "igG_B")){
+    custom_labels2 <- c("ebna6_0740" = "EBNA6 740",
+                        "ebna6_0066" = "EBNA6 66",
+                        "ebna6_0070" = "EBNA6 70",
+                        "ada1b_369_383" = "ADRA1B 369",
+                        "ada1d_422_436" = "ADRA1D 422",
+                        "ada2c_289_303" = "ADRA2C 289",
+                        "pld6" = "PLD6 29",
+                        "srrm3_383_397" = "SRRM3 383",
+                        "slc24a3_8_22" = "SLC24A3 8",
+                        "tspyl2_185_199" = "TSPYL2 185",
+                        "ebna4_0529" = "EBNA4 529",
+                        "tspyl5_133_147" = "TSPYL5 133",
+                        "ebna4_0539_c540s" = "EBNA4 0539 C540s"
+                        )
+  }
+  
+  if(identical(deparse(substitute(v2)), "igG_M")){
+    custom_labels2 <- c("ebna3c_ebna6_ig_g" = "EBNA6",
+                        "adra1b_ig_g" = "ADRA1B",
+                        "adra1d_ig_g" = "ADRA1D",
+                        "adra2c_ig_g" = "ADRA2C",
+                        "pld6_ig_g" = "PLD6",
+                        "srrm3_ig_g" = "SRRM3",
+                        "slc24a3_ig_g" = "SLC24A3",
+                        "tspyl2_ig_g" = "TSPYL2",
+                        "ebna3b_ebna4_ig_g" = "EBNA4",
+                        "tspyl5_ig_g" = "TSPYL5"
+                        )
+  }
+  
+  if(identical(deparse(substitute(v2)), "scores")){
+    custom_labels2 <- c("bell_score" = "Bell",
+                        "chalder_fatigue_score" = "Chalder-Fatigue",
+                        "pem_score" = "PEM",
+                        "physical_functioning" = "SF-36 PF",
+                        "energy_fatigue" = "SF36: Energy/Fatigue",
+                        "emotional_wellbeing" = "SF36: Emotional Wellbeing",
+                        "social_functioning" = "SF36: Social Functioning",
+                        "pain" = "SF36: Pain",
+                        "general_health" = "SF36: General Health",
+                        "health_change" = "SF36: Health Change",
+                        "physical_sum_scale" = "SF36: Physical Sum Scale",
+                        "psychical_sum_scale" = "SF36: Psychical Sum Scale",
+                        "fatigue_sy_1" = "Fatigue",
+                        "severity_of_muscle_pain_sy_6" = "Severity of Muscle Pain",
+                        "severity_of_headache_sy_7" = "Severity of headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }
+  
+  
+  if(identical(deparse(substitute(v1)), "igG_B_positiv")){
+    custom_labels1 <- c("ebna6_0740_2" = "EBNA6 740",
+                        "ebna6_0066_2" = "EBNA6 66",
+                        "ebna6_0070_2" = "EBNA6 70",
+                        "ada1b_369_383_2" = "ADRA1B 369",
+                        "ada1d_422_436_2" = "ADRA1D 422",
+                        "ada2c_289_303_2" = "ADRA2C 289",
+                        "pld6_2" = "PLD6 29",
+                        "srrm3_383_397_2" = "SRRM3 383",
+                        "slc24a3_8_22_2" = "SLC24A3 8",
+                        "tspyl2_185_199_2" = "TSPYL2 185",
+                        "ebna4_0529_2" = "EBNA4 529",
+                        "tspyl5_133_147_2" = "TSPYL5 133",
+                        "ebna4_0539_c540s_2" = "EBNA4 0539 C540s"
+                        )
+  }    
+  
+    if(identical(deparse(substitute(v1)), "igG_B")){
+    custom_labels1 <- c("ebna6_0740" = "EBNA6 740",
+                        "ebna6_0066" = "EBNA6 66",
+                        "ebna6_0070" = "EBNA6 70",
+                        "ada1b_369_383" = "ADRA1B 369",
+                        "ada1d_422_436" = "ADRA1D 422",
+                        "ada2c_289_303" = "ADRA2C 289",
+                        "pld6" = "PLD6 29",
+                        "srrm3_383_397" = "SRRM3 383",
+                        "slc24a3_8_22" = "SLC24A3 8",
+                        "tspyl2_185_199" = "TSPYL2 185",
+                        "ebna4_0529" = "EBNA4 529",
+                        "tspyl5_133_147" = "TSPYL5 133",
+                        "ebna4_0539_c540s" = "EBNA4 0539 C540s"
+                        )
+  }
+  
+  if(identical(deparse(substitute(v1)), "igG_M")){
+    custom_labels1 <- c("ebna3c_ebna6_ig_g" = "EBNA6",
+                        "adra1b_ig_g" = "ADRA1B",
+                        "adra1d_ig_g" = "ADRA1D",
+                        "adra2c_ig_g" = "ADRA2C",
+                        "pld6_ig_g" = "PLD6",
+                        "srrm3_ig_g" = "SRRM3",
+                        "slc24a3_ig_g" = "SLC24A3",
+                        "tspyl2_ig_g" = "TSPYL2",
+                        "ebna3b_ebna4_ig_g" = "EBNA4",
+                        "tspyl5_ig_g" = "TSPYL5"
+                        )
+  }
+ 
+  
+  if(identical(deparse(substitute(v1)), "scores")){
+    custom_labels1 <- c("bell_score" = "Bell",
+                        "chalder_fatigue_score" = "Chalder-Fatigue",
+                        "pem_score" = "PEM",
+                        "physical_functioning" = "SF-36 PF",
+                        "energy_fatigue" = "SF36: Energy/Fatigue",
+                        "emotional_wellbeing" = "SF36: Emotional Wellbeing",
+                        "social_functioning" = "SF36: Social Functioning",
+                        "pain" = "SF36: Pain",
+                        "general_health" = "SF36: General Health",
+                        "health_change" = "SF36: Health Change",
+                        "physical_sum_scale" = "SF36: Physical Sum Scale",
+                        "psychical_sum_scale" = "SF36: Psychical Sum Scale",
+                        "fatigue_sy_1" = "Fatigue",
+                        "severity_of_muscle_pain_sy_6" = "Severity of Muscle Pain",
+                        "severity_of_headache_sy_7" = "Severity of headache",
+                        "joint_pain_sy_8" = "Joint Pain",
+                        "fatigue_score" = "Fatigue",
+                        "cognitive_score" = "Cognition",
+                        "immune_score" = "Immune",
+                        "com_total" = "Compass",
+                        "com_orth" = "-orthostatic",
+                        "com_vaso" = "-vasomotor",
+                        "com_secr" = "-secretomotor",
+                        "com_gi" = "-gastrointestinal",
+                        "com_blad" = "-bladder",
+                        "com_pupil" = "-pupillomotor")
+  }   
+  
+  custom_labels2 <- rev(custom_labels2)
+  
+  # Prüfen, ob Stratifizierung durchgeführt werden soll
+  if (stratified) {
+    data_sub <- subset(data, diagnosis == d)
+  } else {
+    data_sub <- subset(data, diagnosis != "piMECFS")
+  }
+  
+  # Initialize DataFrames for correlations, p-values, and sample sizes
+  phi_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  p_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  n_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  
+  colnames(phi_values) <- v2
+  rownames(phi_values) <- v1
+  colnames(p_values) <- v2
+  rownames(p_values) <- v1
+  colnames(n_values) <- v2
+  rownames(n_values) <- v1
+  
+  # Berechnung des Phi-Koeffizienten für alle Variablenpaare
+  for (i in seq_along(v1)) {
+    for (j in seq_along(v2)) {
+      x <- as.numeric(unlist(data_sub[, v1[i]]))
+      y <- as.numeric(unlist(data_sub[, v2[j]]))
+      
+      # Berechnung nur durchführen, wenn genügend Daten vorhanden sind
+      if (sum(!is.na(x) & !is.na(y)) > 0) {
+        # Kontingenztabelle erstellen
+        cont_table <- table(factor(x, levels = c(0, 1)), factor(y, levels = c(0, 1)))
+        
+        # Phi-Koeffizient berechnen
+        phi <- psych::phi(cont_table)
+        phi_values[i, j] <- phi
+        
+        # p-Wert basierend auf Chi-Quadrat-Test der Unabhängigkeit
+        chi_test <- chisq.test(cont_table)
+        p_values[i, j] <- chi_test$p.value
+        
+        # Anzahl der Nicht-NA-Werte speichern
+        n_values[i, j] <- sum(!is.na(x) & !is.na(y))
+      }
+    }
+  }
+  
+# Format Correlations, p-values, and n-values into a suitable format
+  phi_df <- as.data.frame(phi_values)
+  phi_df <- phi_df %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "Phi", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+  
+  p_values_df <- as.data.frame(p_values)
+  p_values_df <- p_values_df %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "p_value", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+  
+  n_values_df <- as.data.frame(n_values)
+  n_values_df <- n_values_df %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "n", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+  
+  # Zusammenfügen der Daten
+  result <- left_join(phi_df, p_values_df, by = c("Var1", "Var2"))
+  result <- left_join(result, n_values_df, by = c("Var1", "Var2"))
+  
+  # Sterne für signifikante p-Werte hinzufügen
+  result$Star <- ifelse(result$p_value < 0.05, "*", "")
+  
+  
+   # Calculate the number of variables
+  n_var1 <- length(v1)
+  n_var2 <- length(v2)
+
+  # Set tile size (adjust as needed)
+  tile_size <- 0.35
+
+  # Calculate the plot dimensions based on the number of variables and tile size
+  plot_width <- tile_size * n_var1   
+  plot_height <- tile_size * n_var2
+  
+  # Plot erstellen
+  g <- ggplot(data = result, 
+              aes(Var1, Var2, fill = Phi)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", 
+                         midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                         name = "Phi-Coefficient") +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0, face = "bold", size = 10),  
+      axis.text.y = element_text(hjust = 1, face = "bold", size = 10),  
+      axis.title.x = element_text(vjust = 1.5, face = "bold", size = 10),  # Adjust x-axis title position
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      plot.margin = margin(1, 1, 1, 1, "cm"),  # Adjust the margin around the plot
+      panel.spacing = unit(0.5, "lines")
+    ) +  
+    labs(title = paste(d)) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Phi) > 0.7, sprintf("%.2f\nn=%d", Phi, n), "")),
+              color = "white", size = 3) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Phi) <= 0.7 & abs(Phi) > 0.2, sprintf("%.2f\nn=%d", Phi, n), "")),
+              color = "black", size = 3) +
+    scale_x_discrete(labels = custom_labels1, position = "top") + 
+    scale_y_discrete(labels = custom_labels2) +
+    labs(x = NULL) +
+    geom_text(aes(label = Star), color = "black", size = 5, vjust = +0.8, hjust = -1.5)+
+    force_panelsizes(cols = unit(plot_width, "in"), rows = unit(plot_height, "in"))
+  
+  print(g)
+  
+  # Optional: Grafik speichern
+  save_folder <- "Phi_Heatmaps"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+  
+  file_name <- paste0(save_folder, "/", deparse(substitute(v1)), "_", deparse(substitute(v2)), "_", gsub("/", "_", d), "_phi_plot.png")
+  ggsave(file_name, g, width = 10, height = 8)
+}
+
+
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+
+
+for(d in dia){
+  create_correlation_plot_phi(data_01, igG_B_positiv, igG_M, d, TRUE)
+
+}
+
+create_correlation_plot_phi(data_01, igG_B_positiv, igG_M, "Full Cohort without piMECFS", FALSE)
+
+
+
+
+```
+
+
+# Korrelation München und Symptome
+
+## Alle Werte miteinbezogen
+
+```{r igM_scores, fig.width=10, fig.height=10, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+for(d in dia){
+  create_correlation_plot(data, igG_M, scores, d, TRUE, TRUE, TRUE)
+}
+
+
+create_correlation_plot(data, igG_M, scores, "Full Cohort without piMECFS", FALSE)
+
+```
+
+### neue Version
+
+```{r igM_scores_neu, fig.width=6, fig.height=6, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+scores_short_new <-c("fatigue_score", "cognitive_score", "severity_of_muscle_pain_sy_6", "severity_of_headache_sy_7", "pem_score", "com_total") 
+for(d in dia){
+  create_correlation_plot(data, igG_M, scores_short_new, d, TRUE)
+}
+
+
+create_correlation_plot(data, igG_M, scores_short_new, "Full Cohort without piMECFS", FALSE)
+
+p2 <- create_correlation_plot(data, igG_M, scores_short_new, "piMECFS", T, F, T)
+p3 <- create_correlation_plot(data, igG_M, scores_short_new, "pcMECFS", T, F, F)
+p4 <- create_correlation_plot(data, igG_M, scores_short_new, "PCS", T, T, F)
+
+proteine_scores <- p2 | p3 | p4 
+
+ggsave("../Manuscript/Figures_Manuscript/Heatmaps_Proteins_Clinic.tif", proteine_scores, width = 20, height = 8, dpi = 600, bg = "white")
+
+
+saveRDS(proteine_scores, "Proteine_Clinic.rds")
+
+```
+
+## Nur positive Werte (0 als NA)
+
+
+Hier kein piMECFS, da zum Teil zu wenig Beobachtungen für Korrelation
+
+Update: Hier muss auch pcMECFS/HC raus
+
+
+
+```{r igM_pos_scores, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS")
+
+data_pos <- data
+data_pos[igG_M] <- lapply(data_pos[igG_M], function(x) ifelse(x == 0, NA, x))
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores, d, TRUE)
+}
+
+
+create_correlation_plot(data_pos, igG_M, scores, "Full Cohort without piMECFS", FALSE)
+```
+
+### kurze Version
+
+```{r igM_pos_scores_short, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+#Bell, SF-36 PF; Fatigue; Cognition, Muscle Pain, Headache, PEM, Compass
+
+scores_short <- scores[c(1, 17, 18, 14, 15, 3, 4, 20)]
+
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores_short, d)
+}
+
+create_correlation_plot(data_pos, igG_M, scores_short, "Full Cohort without piMECFS", FALSE)
+
+```
+
+### neue Version
+
+```{r igM_pos_scores_short_neu, fig.width=6, fig.height=6, out.width='70%', fig.align='center',results='asis'}
+#Bell, SF-36 PF; Fatigue; Cognition, Muscle Pain, Headache, PEM, Compass
+
+scores_short <- scores[c(1, 17, 18, 14, 15, 3, 4, 20)]
+
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores_short_new, d)
+}
+
+create_correlation_plot(data_pos, igG_M, scores_short_new, "Full Cohort without piMECFS", FALSE)
+
+```
+
+## Nur positive Werte (0 als 0)
+
+```{r igM_pos_scores_0, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+data_pos <- data
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores, d, TRUE)
+}
+
+
+create_correlation_plot(data_pos, igG_M, scores, "Full Cohort without piMECFS", FALSE)
+```
+
+
+### kurze Version
+
+```{r igM_pos_scores_0_short, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+data_pos <- data
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores_short, d, TRUE)
+}
+
+
+create_correlation_plot(data_pos, igG_M, scores_short, "Full Cohort without piMECFS", FALSE)
+```
+
+
+### neue Version
+
+```{r igM_pos_scores_0_short_neu, fig.width=6, fig.height=6, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+data_pos <- data
+
+
+for(d in dia){
+  create_correlation_plot(data_pos, igG_M, scores_short_new, d, TRUE)
+}
+
+
+create_correlation_plot(data_pos, igG_M, scores_short_new, "Full Cohort without piMECFS", FALSE)
+```
+
+# Korrelation München IgG zueinander
+```{r igG_igG_M, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+for(d in dia){
+  create_correlation_plot(data, igG_M, igG_M, d, TRUE)
+}
+
+
+create_correlation_plot(data, igG_M, igG_M, "Full Cohort without piMECFS", FALSE)
+
+```
+
+# Korrelation München IgG mit EBV Serologie
+
+```{r igg_MvsSerologie, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+#nur ausgwählte igG korrelieren
+## igG
+igG_M_2 <- c("ebna3c_ebna6_ig_g", "ebna3b_ebna4_ig_g", "ebna1del_cdo_ebna1_ig_g", "bfrf3_ebv_vca_p18_ig_g", "blrf2_ebv_vca_p23_ig_g_2", "bmrf1cdo_ebv_ea_d_ig_g")
+
+data[c(igG_M_2)] <- lapply(data[c(igG_M_2)], as.numeric)
+
+
+## igG aus Berliner Serologie 
+ebv_serology <- c("vca_ig_g", "ebna1_ig_g")
+
+data[ebv_serology] <- lapply(data[ebv_serology], as.numeric)
+
+data$vca_ig_g <- ifelse(data$vca_ig_g >= 9, data$vca_ig_g, 0)
+data$ebna1_ig_g <- ifelse(data$ebna1_ig_g >= 9, data$ebna1_ig_g, 0)
+
+dia <- c("PCS", "pcMECFS", "piMECFS", "HC")
+
+for(d in dia){
+  create_correlation_plot(data, ebv_serology, igG_M_2, d, TRUE)
+}
+
+
+create_correlation_plot(data, ebv_serology, igG_M_2, "Full Cohort without piMECFS", FALSE)
+
+```
+
+# Limma Analyse mit Münchner Proteindaten
+
+inklusive Nullen
+
+```{r limma}
+
+zero_data <- data
+zero_data[,igG_M] <- lapply(data[,igG_M], function(x) ifelse(x <= 0, 0.01, x))
+
+log_igG <- log2(zero_data[,igG_M])
+design <- model.matrix(object = ~ 0 + diagnosis, data = data)
+colnames(design) <- gsub(pattern = "diagnosis", replacement = "", x = colnames(design))
+colnames(design) <- gsub(pattern = "/", replacement = "_", x = colnames(design))
+colnames(design) <- gsub(pattern = "-", replacement = "", x = colnames(design))
+
+
+cont.matrix <- limma::makeContrasts( 
+    CFS_HC = "piMECFS - HC",
+    CFS_PCS_CFS   = "piMECFS - pcMECFS",
+    CFS_PCS   = "piMECFS - PCS",
+    HC_PCS_CFS = "pcMECFS - HC",
+    HC_PCS     = "PCS - HC",
+    PCS_CFS_PCS      = "PCS - pcMECFS",
+    levels= design )
+fit <- lmFit(object = t(log_igG), design = design)
+fit2 <- contrasts.fit(fit, contrasts = cont.matrix)
+fit2 <- eBayes(fit2)
+my_results <- list()
+hot_candidates <- c()
+
+my_results[["piMECFS - HC"]]     <- topTable(fit = fit2, coef = "CFS_HC", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - HC"]], P.Value <= 0.1)))
+
+my_results[["piMECFS - pcMECFS"]]    <- topTable(fit = fit2, coef = "CFS_PCS_CFS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - pcMECFS"]], P.Value <= 0.1)))
+
+my_results[["piMECFS - PCS"]]  <- topTable(fit = fit2, coef = "CFS_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - PCS"]], P.Value <= 0.1)))
+
+
+my_results[["pcMECFS - HC"]]    <- topTable(fit = fit2, coef = "HC_PCS_CFS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["pcMECFS - HC"]], P.Value <=0.1)))
+
+my_results[["PCS - HC"]]        <- topTable(fit = fit2, coef = "HC_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["PCS - HC"]], P.Value <= 0.1)))
+
+my_results[["PCS - pcMECFS"]]         <- topTable(fit = fit2, coef = "PCS_CFS_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["PCS - pcMECFS"]], P.Value <= 0.1)))
+
+hot_candidates <- unique(hot_candidates)
+
+lfc <- 1
+pcut <- 0.1
+theme_default <- theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+
+options(repr.plot.width = 8, repr.plot.height = 6) 
+
+
+igG_labels <- c("ebna3c_ebna6_ig_g" = "EBNA6",
+                        "adra1b_ig_g" = "ADRA1B",
+                        "adra1d_ig_g" = "ADRA1D",
+                        "adra2c_ig_g" = "ADRA2C",
+                        "pld6_ig_g" = "PLD6",
+                        "srrm3_ig_g" = "SRRM3",
+                        "slc24a3_ig_g" = "SLC24A3",
+                        "tspyl2_ig_g" = "TSPYL2",
+                        "ebna3b_ebna4_ig_g" = "EBNA4",
+                        "tspyl5_ig_g" = "TSPYL5")
+
+
+
+
+
+
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - HC"]])]
+
+
+# Define the save folder for each plot type
+save_folder_vulcanos <- "Vulcanos"
+save_folder_grafiken <- "Grafiken"
+
+if (!file.exists(save_folder_vulcanos)) {
+  dir.create(save_folder_vulcanos)
+}
+
+if (!file.exists(save_folder_grafiken)) {
+  dir.create(save_folder_grafiken)
+}
+
+# Volcano plot: piMECFS vs. HC
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - HC"]])]
+CFSvsHC <- EnhancedVolcano(my_results[["piMECFS - HC"]],
+                      lab = igG_labels_res, 
+                      title = "piMECFS vs. HC",
+                      x = "logFC", y = "P.Value", 
+                      xlab = expression(paste("Log"[2], " FC")),
+                      pCutoff = pcut,
+                      FCcutoff = lfc,
+                      pointSize = 8.0,
+                      maxoverlapsConnectors = Inf,
+                      labSize = 10, labCol = "grey25",
+                      col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                      arrowheads = FALSE,
+                      drawConnectors = TRUE,
+                      widthConnectors = 0.75,
+                      max.overlaps = Inf,
+                      ylim = c(0, 5),
+                      legendPosition = "none",
+                      subtitle = NULL,
+                      caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+file_name <- file.path(save_folder_vulcanos, "CFS_HC.png")
+ggsave(file_name, CFSvsHC, bg = "white")
+CFSvsHC  
+kable(my_results[["piMECFS - HC"]], digits = 3)
+
+# Volcano plot: piMECFS vs. pcMECFS
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - pcMECFS"]])]
+CFSvsPCS_CFS <- EnhancedVolcano(my_results[["piMECFS - pcMECFS"]],
+                        title = "piMECFS vs. pcMECFS",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        pCutoff = pcut,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition = "none",
+                        subtitle = NULL,
+                        caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+file_name <- file.path(save_folder_grafiken, "CFS_PCS_CFS.png")
+ggsave(file_name, CFSvsPCS_CFS, bg = "white")
+CFSvsPCS_CFS
+kable(my_results[["piMECFS - pcMECFS"]], digits = 3)
+
+# Volcano plot: piMECFS vs. PCS
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - PCS"]])]
+CFSvsPCS <- EnhancedVolcano(my_results[["piMECFS - PCS"]],
+                        title ="piMECFS vs. PCS",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition = "none",
+                        subtitle = NULL,
+                        caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+file_name <- file.path(save_folder_grafiken, "CFS_PCS.png")
+ggsave(file_name, CFSvsPCS, bg = "white")
+CFSvsPCS
+kable(my_results[["piMECFS - PCS"]], digits = 3)
+
+# Volcano plot: pcMECFS vs. HC
+HCvsPCS_CFS <- EnhancedVolcano(my_results[["pcMECFS - HC"]],
+                               title = "pcMECFS vs. HC",
+                               x = "logFC", y = "P.Value", 
+                               lab = igG_labels_res,
+                               xlab = expression(paste("Log"[2], " FC")),
+                               pCutoff = pcut,
+                               FCcutoff = lfc,
+                               pointSize = 8.0,
+                               maxoverlapsConnectors = Inf,
+                               labSize = 10, labCol = "grey25",
+                               col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                               arrowheads = FALSE,
+                               drawConnectors = TRUE,
+                               widthConnectors = 0.75,
+                               max.overlaps = Inf,
+                               ylim = c(0, 5),
+                               legendPosition = "none",
+                               subtitle = NULL,
+                               caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+
+
+file_name <- file.path(save_folder_grafiken, "PCS_CFS_HC.png")
+ggsave(file_name, HCvsPCS_CFS, bg = "white")
+HCvsPCS_CFS
+kable(my_results[["pcMECFS - HC"]], digits = 3)
+
+# Volcano plot: PCS vs. HC
+igG_labels_res <- igG_labels[rownames(my_results[["PCS - HC"]])]
+HCvsPCS <- EnhancedVolcano(my_results[["PCS - HC"]],
+                        title = "PCS vs. HC",   
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition = "none",
+                        subtitle = NULL,
+                        caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+file_name <- file.path(save_folder_grafiken, "PCS_HC.png")
+ggsave(file_name, HCvsPCS, bg = "white")
+HCvsPCS
+kable(my_results[["PCS - HC"]], digits = 3)
+
+# Volcano plot: PCS vs. pcMECFS
+igG_labels_res <- igG_labels[rownames(my_results[["PCS - pcMECFS"]])]
+PCS_CFS_PCS <- EnhancedVolcano(my_results[["PCS - pcMECFS"]],
+                               title = "PCS vs. pcMECFS",
+                               x = "logFC", y = "P.Value", 
+                               lab = igG_labels_res,
+                               xlab = expression(paste("Log"[2], " FC")),
+                               pCutoff = pcut,
+                               FCcutoff = lfc,
+                               pointSize = 10.0,
+                               maxoverlapsConnectors = Inf,
+                               labSize = 8, labCol = "grey25",
+                               col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                               arrowheads = FALSE,
+                               drawConnectors = TRUE,
+                               widthConnectors = 0.75,
+                               max.overlaps = Inf,
+                               ylim = c(0, 5),
+                               legendPosition = "none",
+                               subtitle = NULL,
+                               caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28),
+          axis.title = element_text(size = 28))
+
+file_name <- file.path(save_folder_grafiken, "PCS_CFS_PCS.png")
+ggsave(file_name, PCS_CFS_PCS, bg = "white")
+PCS_CFS_PCS
+kable(my_results[["PCS - pcMECFS"]], digits = 3)
+
+```
+
+# Multiple Regressionen
+
+## piMECFS vs. pcMECFS
+
+```{r}
+#data_log_igG <- cbind(log_igG, scores_short_new)
+
+df1 <- subset(zero_data, diagnosis == "PCS" )
+df1[,igG_M] <- log2(df1[,igG_M])
+
+#lm_func <- function(score){
+#  lm(score ~ )
+#}
+```
+
