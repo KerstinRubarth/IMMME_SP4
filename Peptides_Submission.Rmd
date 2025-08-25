@@ -1,0 +1,871 @@
+---
+title: "Analyse November 24"
+author: "Kerstin Rubarth"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 5
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.path= "Files")
+library(readxl)
+library(tidyverse)
+library(janitor)
+library(limma)
+library(FactoMineR)
+library(factoextra)
+library(patchwork)
+library(EnhancedVolcano)
+library(tableone)
+library(kableExtra)
+library(dplyr)
+library(openxlsx)
+library(viridis)
+library(forcats)
+library(grid)
+library(gridExtra)
+library(ggpubr)
+library(Hmisc)
+library(ggh4x)
+library(cowplot)
+library(extrafont)
+```
+
+```{r data, include = FALSE}
+# Read data
+data <- read_excel("../cohort/Supplemental_table_1.xlsx",sheet = "peptide-IgG")
+
+# Clean names
+data <- clean_names(data)
+
+
+# Define clinical scores
+scores <- c("fatigue_score", "pem_score", "severity_of_muscle_pain_sy_6", "severity_of_headache_sy_7", "cognitive_score", "com_total")
+
+  
+  
+data[c(scores)] <- lapply(data[c(scores)], as.numeric)
+
+# Rename Variables "median_pe_"
+
+names <- colnames(data)
+names <- gsub("median_pe_", "", names)
+names <- gsub("labim_", "", names)
+names <- gsub("labinf_", "", names)
+names <- gsub("labend_", "", names)
+names <- gsub("labkl_", "", names)
+names <- gsub("labh_","", names)
+names <- gsub("_altes_peptid", "", names)
+colnames(data) <- names
+
+
+data <- data %>%
+  rename(pld6_29_43 = pld6)
+# Define igG
+igG <- c("ebna6_0066", "ebna6_0070", "ada1b_369_383", "ada1d_422_436", "ada2c_289_303", "pld6_29_43", "srrm3_383_397",  "slc24a3_8_22", "tspyl2_185_1992", "ebna4_0529",  "tspyl5_133_147")
+
+
+# Set negative and zero values for limma to 0.01
+data[,igG] <- lapply(data[,igG], function(x) ifelse(x <= 0, 0.01, x))
+
+rest <- setdiff(colnames(data), igG)
+
+data <- data[,c(rest, igG)]
+
+
+# Rename diagnoses
+data <- mutate(data, diagnosis = case_when(diagnosis == "piCFS" ~ "piMECFS",
+                                           diagnosis == "pcCFS" ~ "pcMECFS",
+                                           diagnosis == "PCS" ~ "PCS",
+                                           diagnosis == "HC" ~ "HC"))
+
+# Globale Einstellung für Schriftart
+theme_set(
+  theme_minimal() +
+  theme(text = element_text(family = "Times New Roman"))
+)
+
+
+```
+
+```{r heatmap_func, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+create_correlation_plot <- function(data, v1, v2, d, show_legend = TRUE, show_y_labels = TRUE) {
+  
+  
+    if(identical(deparse(substitute(v2)), "ebna")){
+    custom_labels2 <- c("ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ebna4_0529" = "EBNA4_529",
+                        "ebna6_0740" = "EBNA6_740")
+    }
+  
+  
+   
+  
+  
+    
+  
+  
+    
+  
+  
+       
+  
+      if(identical(deparse(substitute(v2)), "mimicry")){
+    custom_labels2 <- c("ada1b_369_383" = "ADA1B_369",
+                        "ada1d_422_436" = "ADA1D_422",
+                        "ada2c_289_303" = "ADA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_1992" = "TSPYL2_185",
+                        "tspyl5_133_147" = "TSPYL5_133")
+      }
+
+  
+  
+  
+  if(identical(deparse(substitute(v2)), "igG")){
+    custom_labels2 <- c("ebna6_0740" = "EBNA6_740",
+                        "ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_1992" = "TSPYL2_185",
+                        "ebna4_0529" = "EBNA4_529",
+                        "tspyl5_133_147" = "TSPYL5_133")
+  }
+  
+    if(identical(deparse(substitute(v2)), "ebna_mimicry")){
+    custom_labels2 <- c("ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ebna4_0529" = "EBNA4_529",
+                        "ebna6_0740" = "EBNA6_740",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_1992" = "TSPYL2_185",
+                        "tspyl5_133_147" = "TSPYL5_133")
+  }
+  
+
+  
+      if(identical(deparse(substitute(v2)), "scores")){
+    custom_labels2 <- c("chalder"  = "CFQ",
+                     "fatigue_score" = "Fatigue",
+                     "cognitive_score" = "Cognitive",
+                     "immune_score" = "Immune",
+                     "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                     "severity_of_headache_sy_7" = "Headache",
+                     "joint_pain_sy_8" = "Joint Pain",
+                     "pem_score" = "PEM",
+                     "com_total" = "Compass")
+    }  
+  
+  
+      if(identical(deparse(substitute(v1)), "ebna")){
+    custom_labels1 <- c("ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ebna4_0529" = "EBNA4_529",
+                        "ebna6_0740" = "EBNA6_740")
+      }
+   
+    if(identical(deparse(substitute(v1)), "mimicry")){
+    custom_labels1 <- c("ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_1992" = "TSPYL2_185",
+                        "tspyl5_133_147" = "TSPYL5_133")
+    } 
+  
+    
+  
+ 
+  
+    if(identical(deparse(substitute(v1)), "scores")){
+    custom_labels1 <- c("chalder"  = "CFQ",
+                     "fatigue_score" = "Fatigue",
+                     "cognitive_score" = "Cognitive",
+                     "immune_score" = "Immune",
+                     "severity_of_muscle_pain_sy_6" = "Muscle Pain",
+                     "severity_of_headache_sy_7" = "Headache",
+                     "joint_pain_sy_8" = "Joint Pain",
+                     "pem_score" = "PEM",
+                     "com_total" = "Compass")
+    }  
+  
+  
+  
+  
+    if(identical(deparse(substitute(v1)), "igG")){
+    custom_labels1 <- c("ebna6_0740" = "EBNA6_740",
+                        "ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_199" = "TSPYL2_185",
+                        "ebna4_0529" = "EBNA4_529",
+                        "tspyl5_133_147" = "TSPYL5_133")
+    }
+    if(identical(deparse(substitute(v1)), "ebna_mimicry")){
+    custom_labels1 <- c("ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ebna4_0529" = "EBNA4_529",
+                        "ebna6_0740" = "EBNA6_740",
+                        "ada1b_369_383" = "ADRA1B_369",
+                        "ada1d_422_436" = "ADRA1D_422",
+                        "ada2c_289_303" = "ADRA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_199" = "TSPYL2_185",
+                        "tspyl5_133_147" = "TSPYL5_133")
+  }  
+
+  custom_labels2 <- rev(custom_labels2)
+   data_sub <- subset(data, diagnosis == d)
+
+  # Calculate Correlations
+  cor_mat <- cor(data_sub[, v1, drop = FALSE], data_sub[, v2, drop = FALSE], use = "pairwise.complete.obs", method = "spearman")
+  cor_mat <- as.data.frame(cor_mat)
+
+  # Initialize DataFrame for p-values and sample sizes
+  p_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  n_values <- matrix(NA, ncol = length(v2), nrow = length(v1))
+  colnames(p_values) <- colnames(cor_mat)
+  rownames(p_values) <- rownames(cor_mat)
+  colnames(n_values) <- colnames(cor_mat)
+  rownames(n_values) <- rownames(cor_mat)
+
+ for(i in seq_along(v1)) {
+    for(j in seq_along(v2)) {
+        x <- as.numeric(unlist(data_sub[, v1[i]]))
+        y <- as.numeric(unlist(data_sub[, v2[j]]))
+        
+        # Calculate the number of non-missing values in both x and y
+        n_values[i, j] <- sum(!is.na(x) & !is.na(y))
+        
+        # Only perform the correlation test if there are valid pairs
+        if (n_values[i, j] > 0) {
+            test <- cor.test(x, y, method = "spearman", use = "pairwise.complete.obs")
+            p_values[i, j] <- test$p.value
+        } else {
+            p_values[i, j] <- NA
+        }
+    }
+}
+  p_values <- as.data.frame(p_values)
+  n_values <- as.data.frame(n_values)
+
+  # Format Correlations, p-values, and n-values into a suitable format
+  cor_mat <- cor_mat %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "Correlation", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  p_values <- p_values %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "p_value", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  n_values <- n_values %>%
+    rownames_to_column(var = "Var1") %>%
+    gather(key = "Var2", value = "n", -Var1) %>%
+    mutate(
+      Var1 = recode_factor(Var1, !!!custom_labels1),
+      Var2 = recode_factor(Var2, !!!custom_labels2)
+    )
+
+  result <- left_join(cor_mat, p_values, by = c("Var1", "Var2"))
+  result <- left_join(result, n_values, by = c("Var1", "Var2"))
+
+  # Create a new field for the star based on the p-value
+  result <- result %>%
+    mutate(Star = ifelse(p_value < 0.05, "*", ""))
+  
+  
+   # Calculate the number of variables
+  n_var1 <- length(v1)
+  n_var2 <- length(v2)
+
+  # Set tile size (adjust as needed)
+  tile_size <- 0.35
+
+  # Calculate the plot dimensions based on the number of variables and tile size
+  plot_width <- tile_size * n_var1   
+  plot_height <- tile_size * n_var2
+  
+  
+  
+  # Create the plot
+  g <- ggplot(data = result, 
+              aes(Var1, Var2, fill = Correlation)) +
+    geom_tile(color = "white") +
+    scale_fill_gradient2(low = "red", mid = "white", high = "blue", 
+                         midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                         name = "Correlation") +
+    theme_minimal() +
+    theme(
+      text = element_text(size = 18, family = "Times New Roman"),
+      axis.text.y = if (show_y_labels) element_text(hjust = 1, face = "bold", size = 10) else element_blank(),
+    legend.position = if (show_legend) "right" else "none",  # Steuert die Legende
+
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0, face = "bold", size = 10),  
+      #axis.text.y = element_text(hjust = 1, face = "bold", size = 10),  
+      axis.title.x = element_text(vjust = 1.5, face = "bold", size = 10),  # Adjust x-axis title position
+      axis.title.y = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.ticks = element_blank(),
+      #plot.margin = margin(1, 1, 1, 1, "cm"),  # Adjust the margin around the plot
+      panel.spacing = unit(0.5, "lines"),
+    plot.title = element_text(hjust = 0.5, size = 26, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman")
+    ) +  
+    labs(title = paste(d)) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Correlation) > 0.7, sprintf("%.2f\nn=%d", Correlation, n), "")),
+              color = "white", size = 3) +
+    geom_text(aes(Var1, Var2, label = ifelse(abs(Correlation) <= 0.7 & abs(Correlation) > 0.3, sprintf("%.2f\nn=%d", Correlation, n), "")),
+              color = "black", size = 3) +
+    scale_x_discrete(labels = custom_labels1, position = "top") + 
+    scale_y_discrete(labels = custom_labels2) +
+    labs(x = NULL) +
+    geom_text(aes(label = Star), color = "black", size = 5, vjust = +0.8, hjust = -1.5)+
+    force_panelsizes(cols = unit(plot_width, "in"), rows = unit(plot_height, "in"))
+  
+  print(g)
+  
+  # Create a folder for saved graphics (if not already present)
+  save_folder <- "Heatmaps2"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+
+  # Generate filename for saved graphic
+  file_name <- paste(save_folder, "/", deparse(substitute(v1)), "_", deparse(substitute(v2)),"_", gsub("/", "_", d), "_correlation_plot.png", sep = "")
+
+ # print(file_name)
+  # Save graphic
+  ggsave(file_name, g, width = plot_width +2, height = plot_height+2, bg = "white", limitsize = FALSE)
+  return(g)
+}
+```
+
+
+
+
+
+
+
+
+#### Limma 
+Due to the exploratory nature we filter with a p-value < 0.1 and a log2-FC of 1.
+
+```{r limma, echo = FALSE, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+log_igG <- log2(data[,igG])
+log_igG <- na.omit(log_igG)
+design <- model.matrix(object = ~ 0 + diagnosis, data = data)
+colnames(design) <- gsub(pattern = "diagnosis", replacement = "", x = colnames(design))
+colnames(design) <- gsub(pattern = "/", replacement = "_", x = colnames(design))
+colnames(design) <- gsub(pattern = "-", replacement = "", x = colnames(design))
+
+
+cont.matrix <- limma::makeContrasts( 
+    CFS_HC = "piMECFS - HC",
+    CFS_PCS_CFS   = "piMECFS - pcMECFS",
+    CFS_PCS   = "piMECFS - PCS",
+    HC_PCS_CFS = "pcMECFS - HC",
+    HC_PCS     = "PCS - HC",
+    PCS_CFS_PCS      = "PCS - pcMECFS",
+    levels= design )
+fit <- lmFit(object = t(log_igG), design = design)
+fit2 <- contrasts.fit(fit, contrasts = cont.matrix)
+fit2 <- eBayes(fit2)
+my_results <- list()
+hot_candidates <- c()
+
+my_results[["piMECFS - HC"]]     <- topTable(fit = fit2, coef = "CFS_HC", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - HC"]], P.Value <= 0.1)))
+
+my_results[["piMECFS - pcMECFS"]]    <- topTable(fit = fit2, coef = "CFS_PCS_CFS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - pcMECFS"]], P.Value <= 0.1)))
+
+my_results[["piMECFS - PCS"]]  <- topTable(fit = fit2, coef = "CFS_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["piMECFS - PCS"]], P.Value <= 0.1)))
+
+
+my_results[["pcMECFS - HC"]]    <- topTable(fit = fit2, coef = "HC_PCS_CFS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["pcMECFS - HC"]], P.Value <=0.1)))
+
+my_results[["PCS - HC"]]        <- topTable(fit = fit2, coef = "HC_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["PCS - HC"]], P.Value <= 0.1)))
+
+my_results[["PCS - pcMECFS"]]         <- topTable(fit = fit2, coef = "PCS_CFS_PCS", number = Inf)
+hot_candidates <- append(hot_candidates, rownames(subset(my_results[["PCS - pcMECFS"]], P.Value <= 0.1)))
+
+hot_candidates <- unique(hot_candidates)
+
+lfc <- 1
+pcut <- 0.1
+theme_default <- theme(
+    legend.position = "none",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+
+options(repr.plot.width = 8, repr.plot.height = 6) 
+
+
+igG_labels <- c("ebna6_0740" = "EBNA6_740",
+                        "ebna6_0066" = "EBNA6_66",
+                        "ebna6_0070" = "EBNA6_70",
+                        "ada1b_369_383" = "ADA1B_369",
+                        "ada1d_422_436" = "ADA1D_422",
+                        "ada2c_289_303" = "ADA2C_289",
+                        "pld6_29_43" = "PLD6_29",
+                        "srrm3_383_397" = "SRRM3_383",
+                        "slc24a3_8_22" = "SLC24A3_8",
+                        "tspyl2_185_199" = "TSPYL2_185",
+                        "ebna4_0529" = "EBNA4_529",
+                        "tspyl5_133_147" = "TSPYL5_133")
+
+
+
+
+
+
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - HC"]])]
+
+
+CFSvsHC <- EnhancedVolcano(my_results[["piMECFS - HC"]],
+                      lab = igG_labels_res, 
+                      title = "piME/CFS vs. HC",
+                        x = "logFC", y = "P.Value", 
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition =  "none",
+                        subtitle = NULL,
+                        caption = NULL
+) + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+
+
+
+
+  save_folder <- "Vulcanos"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+  
+  
+file_name <-  "CFS_HC.png"
+ggsave(file_name, CFSvsHC, bg = "white")
+
+CFSvsHC  
+kable(my_results[["piMECFS - HC"]], digits = 3)
+
+
+
+
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - pcMECFS"]])]
+
+CFSvsPCS_CFS <- EnhancedVolcano(my_results[["piMECFS - pcMECFS"]],
+                        title = "piME/CFS vs. pcME/CFS",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        pCutoff = pcut,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition =  "none",
+                        subtitle = NULL,
+                        caption = NULL
+)  + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+
+save_folder <- "Grafiken"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+}
+
+file_name <-  "CFS_PCS_CFS.png"
+ggsave(file_name, CFSvsPCS_CFS, bg = "white")
+
+CFSvsPCS_CFS
+kable(my_results[["piMECFS - pcMECFS"]], digits = 3)
+
+
+igG_labels_res <- igG_labels[rownames(my_results[["piMECFS - PCS"]])]
+
+CFSvsPCS <- EnhancedVolcano(my_results[["piMECFS - PCS"]],
+                        title ="piME/CFS vs. PCS",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition =  "none",
+                        subtitle = "",
+                        caption = ""
+) + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+
+
+
+CFSvsPCS$widths$panel <- unit(1, "npc")
+CFSvsPCS$heights$panel <- unit(1, "npc")
+
+#title_obj <- textGrob("piMECFS vs. PCS", gp = gpar(fontsize = 16, fontface = "bold"), vjust = 2)
+#CFSvsPCS <- grid.arrange(CFSvsPCS, top = title_obj)
+
+save_folder <- "Grafiken"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+
+file_name <-  "CFS_PCS.png"
+ggsave(file_name, CFSvsPCS, bg = "white")
+CFSvsPCS
+kable(my_results[["piMECFS - PCS"]], digits = 3)
+
+#kable(my_results[["CFS - PCS_nonCFS"]], digits = 3)
+
+igG_labels_res <- igG_labels[rownames(my_results[["pcMECFS - HC"]])]
+
+HCvsPCS_CFS <- EnhancedVolcano(my_results[["pcMECFS - HC"]],
+                               title ="pcME/CFS vs. HC",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        subtitle = NULL,
+                        caption = NULL
+                
+) + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+leg <- get_legend(HCvsPCS_CFS)
+
+#HCvsPCS_CFS <- HCvsPCS_CFS + theme(legend.position = "none")
+
+save_folder <- "Grafiken"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+}
+
+file_name <-  "PCS_CFS_HC.png"
+ggsave(file_name, HCvsPCS_CFS, bg = "white")
+HCvsPCS_CFS
+kable(my_results[["pcMECFS - HC"]], digits = 3)
+
+igG_labels_res <- igG_labels[rownames(my_results[["PCS - HC"]])]
+
+HCvsPCS <- EnhancedVolcano(my_results[["PCS - HC"]],
+                        title ="PCS vs. HC",   
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition =  "none",
+                        subtitle = NULL,
+                        caption = NULL
+)  + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+
+
+
+save_folder <- "Grafiken"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+}
+
+
+HCvsPCS
+file_name <-  "PCS_HC.png"
+ggsave(file_name, HCvsPCS, bg = "white")
+kable(my_results[["PCS - HC"]], digits = 3)
+
+
+
+
+igG_labels_res <- igG_labels[rownames(my_results[["PCS - pcMECFS"]])]
+
+PCS_CFS_PCS <- EnhancedVolcano(my_results[["PCS - pcMECFS"]],
+                               title = "PCS vs. pcME/CFS",
+                        x = "logFC", y = "P.Value", 
+                        lab = igG_labels_res,
+                        xlab = expression(paste("Log"[2], " FC")),
+                        pCutoff = pcut,
+                        FCcutoff = lfc,
+                        pointSize = 8.0,
+                        maxoverlapsConnectors = Inf,
+                        labSize = 10, labCol = "grey25",
+                        col = c('grey55', 'steelblue', 'orchid', 'orange'), 
+                        arrowheads = FALSE,
+                        drawConnectors = TRUE,
+                        widthConnectors = 0.75,
+                        max.overlaps = Inf,
+                        ylim = c(0, 5),
+                        legendPosition =  "none",
+                        subtitle = "",
+                        caption = ""
+)  + theme(plot.title = element_text(hjust = 0.5, size = 28, 
+                                    face = "plain", # Kein fettgedruckter Titel
+                                    family = "Times New Roman"), # Schriftart ändern
+         axis.title = element_text(size = 28))
+#title_obj <- textGrob("PCS vs. pcMECFS", gp = gpar(fontsize = 16, fontface = "bold"), vjust = 2)
+#PCS_CFS_PCS <- grid.arrange(PCS_CFS_PCS, top = title_obj)
+
+save_folder <- "Grafiken"
+  if (!file.exists(save_folder)) {
+    dir.create(save_folder)
+  }
+
+file_name <-  "PCS_PCS_CFS.png"
+ggsave(file_name, PCS_CFS_PCS, bg = "white")
+plot(PCS_CFS_PCS)
+kable(my_results[["PCS - pcMECFS"]], digits = 3)
+
+
+
+
+### Gemeinsame Abbildung
+
+
+limma_peptides_comb <- (CFSvsHC + 
+  theme(
+    plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    axis.text.x = element_text(size = 10, family = "Times New Roman"),
+    axis.text.y = element_text(size = 10, family = "Times New Roman")
+  )) +
+  (HCvsPCS_CFS + 
+    theme(
+      plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+      axis.text.x = element_text(size = 10, family = "Times New Roman"),
+      axis.text.y = element_text(size = 10, family = "Times New Roman")
+    )) + 
+  (HCvsPCS + 
+    theme(
+      plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+      axis.text.x = element_text(size = 10, family = "Times New Roman"),
+      axis.text.y = element_text(size = 10, family = "Times New Roman")
+    )) +
+  plot_annotation(tag_levels = list(c("D", "E", "F"), "1")) &  # Standardannotation
+  theme(
+    text = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    legend.text = element_text(family = "Times New Roman", face = "plain"),
+    legend.title = element_text(family = "Times New Roman", face = "plain"),
+    axis.title = element_text(family = "Times New Roman"),
+    axis.text = element_text(family = "Times New Roman"),
+    plot.tag = element_text(family = "Times New Roman", size = 18, face = "bold")
+  )
+
+
+
+
+
+
+
+ggsave("../Manuscript/Figures_Manuscript/Limma_Peptides.tif", limma_peptides_comb, width = 20, height = 8, dpi = 600)
+
+
+limma_peptides_combv2 <- (CFSvsHC + 
+  theme(
+    plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    axis.text.x = element_text(size = 10, family = "Times New Roman"),
+    axis.text.y = element_text(size = 10, family = "Times New Roman")
+  )) +
+  (HCvsPCS_CFS + 
+    theme(
+      plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+      axis.text.x = element_text(size = 10, family = "Times New Roman"),
+      axis.text.y = element_text(size = 10, family = "Times New Roman")
+    )) + 
+  (HCvsPCS + 
+    theme(
+      plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+      axis.text.x = element_text(size = 10, family = "Times New Roman"),
+      axis.text.y = element_text(size = 10, family = "Times New Roman")
+    )) +
+  theme(
+    text = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    legend.text = element_text(family = "Times New Roman", face = "plain"),
+    legend.title = element_text(family = "Times New Roman", face = "plain"),
+    axis.title = element_text(family = "Times New Roman"),
+    axis.text = element_text(family = "Times New Roman"),
+    plot.tag = element_text(family = "Times New Roman", size = 18, face = "bold")
+  )
+
+
+ggsave("../Manuscript/Figures_Manuscript/Limma_Peptides_wo_DEF.tif", limma_peptides_combv2, width = 20, height = 8, dpi = 600)
+
+```
+
+
+#### EBNA vs. Mimicry
+
+```{r ebna_mimicry, fig.width=8, fig.height=8, out.width='70%', fig.align='center',results='asis'}
+ebna <- c("ebna6_0066", "ebna6_0070", "ebna4_0529", "ebna6_0740")
+#mimicry <- igG[c(4:6,8:10)]
+mimicry <- igG
+dia <- c("HC", "PCS", "pcMECFS", "piMECFS")
+ebna_mimicry <- unique(c(ebna, mimicry))
+ebna_mimicry <- ebna_mimicry[ebna_mimicry != "ebna6_0740"]
+
+for(d in dia){
+  create_correlation_plot(data, ebna, ebna_mimicry, d)
+}
+
+p1 <- create_correlation_plot(data, ebna, ebna_mimicry, "HC", F, T)
+p2 <- create_correlation_plot(data, ebna, ebna_mimicry, "piMECFS", F, F)
+p3 <- create_correlation_plot(data, ebna, ebna_mimicry, "pcMECFS", F, F)
+p4 <- create_correlation_plot(data, ebna, ebna_mimicry, "PCS", T, F)
+
+loadfonts(device = "win")  # Oder "pdf", je nach Ausgabemedium
+
+p1 <- p1 + theme(plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+                                     axis.text.x = element_text(size = 10, family = "Times New Roman"),
+                                     axis.text.y = element_text(size = 10, family = "Times New Roman"))
+p2 <- p2 + theme(plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+                                     axis.text.x = element_text(size = 10, family = "Times New Roman"))
+
+p3 <- p3 + theme(plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+                                     axis.text.x = element_text(size = 10, family = "Times New Roman"))
+
+p4 <- p4 +theme(plot.title = element_text(size = 18, face = "bold", family = "Times New Roman"),
+                                     axis.text.x = element_text(size = 10, family = "Times New Roman"))
+
+ebna_mimicry_plot <- p1 | p2 | p3 | p4 
+
+ebna_mimicry_plot <- ebna_mimicry_plot + plot_annotation(
+    tag_levels = "A"
+  ) & theme(
+    text = element_text(size = 18, face = "bold", family = "Times New Roman"),
+    legend.text = element_text(face = "plain"),
+    legend.title = element_text(face = "plain")
+  )
+
+ggsave("../Manuscript/Figures_Manuscript/Heatmaps_EBNA_Mimicry.tif", ebna_mimicry_plot, width = 20, height = 8, dpi = 600, bg = "white")
+
+
+
+ebna_mimicry_plotv2 <- p1 | p2 | p3 | p4 
+
+
+
+ggsave("../Manuscript/Figures_Manuscript/Heatmaps_EBNA_Mimicry_Wo_ABC.tif", ebna_mimicry_plotv2, width = 20, height = 8, dpi = 600, bg = "white")
+
+
+```
+
+
+
+
+
+
+#### igG vs. Clinical Scores
+
+```{r igg_frage_neu, fig.width=6, fig.height=6, out.width='70%', fig.align='center',results='asis'}
+
+
+
+
+
+
+dia <- c("PCS", "pcMECFS", "piMECFS")
+
+
+for (d in dia) {
+  create_correlation_plot(data, igG, scores, d)
+}
+
+
+
+```
+
+
